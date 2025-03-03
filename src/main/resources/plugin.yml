@@ -1,0 +1,11 @@
+name: CrystalCore
+version: '${project.version}'
+main: net.web1337.borhani.crystalCore.CrystalCore
+api-version: '1.13'
+depend: [ProtocolLib]
+description: Crystal PvP optimization plugin for high-ping players
+website: https://modrinth.com/plugin/crystalcore
+authors:
+  - borhani
+api: ["1.13", "1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20"]
+load: STARTUP
