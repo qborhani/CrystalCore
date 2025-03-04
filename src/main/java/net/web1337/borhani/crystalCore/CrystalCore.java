@@ -33,7 +33,7 @@ public final class CrystalCore extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
 
-        this.currentVersion = getDescription().getVersion();
+        this.currentVersion = this.getName();
         this.protocolManager = ProtocolLibrary.getProtocolManager();
 
         // Register events
@@ -49,62 +49,61 @@ public final class CrystalCore extends JavaPlugin implements Listener {
     }
 
     private void setupPacketListeners() {
-        // Crystal placement optimization
+        // Crystal placement optimization for high-ping players
         protocolManager.addPacketListener(new PacketAdapter(this, PacketType.Play.Client.USE_ITEM) {
             @Override
             public void onPacketReceiving(PacketEvent event) {
                 if (!event.isCancelled() && event.getPlayer().getInventory().getItemInMainHand().getType() == Material.END_CRYSTAL) {
-                    // Process crystal placement with proper synchronization
                     event.setReadOnly(false);
-                    // Run synchronously to maintain proper packet order
-                    Bukkit.getScheduler().runTask(getPlugin(), () -> {
-                        try {
-                            PacketContainer packet = event.getPacket();
-                            // Validate packet data and block position before processing
-                            if (packet != null && event.getPlayer().isOnline()) {
-                                // Get block position from packet
-                                org.bukkit.block.Block targetBlock = event.getPlayer().getTargetBlock(null, 5);
-                                if (targetBlock != null && (targetBlock.getType() == Material.OBSIDIAN || targetBlock.getType() == Material.BEDROCK)) {
-                                    // Process the placement packet synchronously with validation
-                                    org.bukkit.Location placementLoc = targetBlock.getLocation().add(0, 1, 0);
-                                    // Check if there's space for the crystal
-                                    if (placementLoc.getBlock().getType() == Material.AIR) {
-                                        event.getPlayer().updateInventory();
+                    // Process immediately without waiting for next tick
+                    try {
+                        PacketContainer packet = event.getPacket();
+                        if (packet != null && event.getPlayer().isOnline()) {
+                            org.bukkit.block.Block targetBlock = event.getPlayer().getTargetBlock(null, 5);
+                            if (targetBlock.getType() == Material.OBSIDIAN || targetBlock.getType() == Material.BEDROCK) {
+                                org.bukkit.Location placementLoc = targetBlock.getLocation().add(0, 1, 0);
+                                if (placementLoc.getBlock().getType() == Material.AIR) {
+                                    // Spawn crystal immediately without scheduling
+                                    event.getPlayer().getWorld().spawnEntity(placementLoc, org.bukkit.entity.EntityType.END_CRYSTAL);
+                                    // Send immediate spawn packet to all nearby players
+                                    for (Player player : event.getPlayer().getWorld().getNearbyPlayers(placementLoc, 32)) {
+                                        protocolManager.sendServerPacket(player, protocolManager.createPacket(PacketType.Play.Server.SPAWN_ENTITY));
+                                        player.updateInventory();
                                     }
                                 }
                             }
-                        } catch (Exception e) {
-                            getLogger().log(Level.WARNING, "Error handling crystal placement", e);
                         }
-                    });
+                    } catch (Exception e) {
+                        getLogger().log(Level.WARNING, "Error handling crystal placement", e);
+                    }
                 }
             }
         });
 
-        // Crystal attack optimization
+        // Crystal attack optimization for high-ping players
         protocolManager.addPacketListener(new PacketAdapter(this, PacketType.Play.Client.USE_ENTITY) {
             @Override
             public void onPacketReceiving(PacketEvent event) {
                 if (!event.isCancelled()) {
                     try {
                         Entity target = event.getPacket().getEntityModifier(event).read(0);
-                        if (target instanceof EnderCrystal) {
-                            // Process crystal attack synchronously to prevent race conditions
+                        if (target instanceof EnderCrystal && target.isValid() && !target.isDead()) {
                             event.setReadOnly(false);
-                            Bukkit.getScheduler().runTask(getPlugin(), () -> {
-                                try {
-                                    if (target.isValid() && !target.isDead()) {
-                                        // Ensure crystal still exists before removing
-                                        ((EnderCrystal) target).remove();
-                                        // Update nearby players
-                                        for (Player player : target.getWorld().getNearbyPlayers(target.getLocation(), 32)) {
-                                            player.updateInventory();
-                                        }
-                                    }
-                                } catch (Exception e) {
-                                    getLogger().log(Level.WARNING, "Error handling crystal attack", e);
-                                }
-                            });
+                            // Send immediate removal packet to all nearby players
+                            PacketContainer destroyPacket = protocolManager.createPacket(PacketType.Play.Server.ENTITY_DESTROY);
+                            destroyPacket.getIntLists().write(0, Collections.singletonList(target.getEntityId()));
+                            
+                            for (Player player : target.getWorld().getNearbyPlayers(target.getLocation(), 32)) {
+                                protocolManager.sendServerPacket(player, destroyPacket);
+                            }
+                            
+                            // Remove the crystal
+                            target.remove();
+                            
+                            // Update inventories
+                            for (Player player : target.getWorld().getNearbyPlayers(target.getLocation(), 32)) {
+                                player.updateInventory();
+                            }
                         }
                     } catch (Exception e) {
                         getLogger().log(Level.WARNING, "Error handling crystal attack packet", e);
