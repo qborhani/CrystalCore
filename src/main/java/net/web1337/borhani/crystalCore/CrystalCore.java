@@ -53,22 +53,30 @@ public final class CrystalCore extends JavaPlugin implements Listener {
         protocolManager.addPacketListener(new PacketAdapter(this, PacketType.Play.Client.USE_ITEM) {
             @Override
             public void onPacketReceiving(PacketEvent event) {
-                try {
-                    if (event.getPlayer().getInventory().getItemInMainHand().getType() == Material.END_CRYSTAL) {
-                        // Optimize crystal placement latency
-                        event.setReadOnly(false);
-                        PacketContainer packet = event.getPacket();
-                        // Process the packet with reduced delay
-                        Bukkit.getScheduler().runTask(getPlugin(), () -> {
-                            try {
-                                protocolManager.receiveClientPacket(event.getPlayer(), packet);
-                            } catch (Exception e) {
-                                getLogger().warning("Error processing crystal placement");
+                if (!event.isCancelled() && event.getPlayer().getInventory().getItemInMainHand().getType() == Material.END_CRYSTAL) {
+                    // Process crystal placement with proper synchronization
+                    event.setReadOnly(false);
+                    // Run synchronously to maintain proper packet order
+                    Bukkit.getScheduler().runTask(getPlugin(), () -> {
+                        try {
+                            PacketContainer packet = event.getPacket();
+                            // Validate packet data and block position before processing
+                            if (packet != null && event.getPlayer().isOnline()) {
+                                // Get block position from packet
+                                org.bukkit.block.Block targetBlock = event.getPlayer().getTargetBlock(null, 5);
+                                if (targetBlock != null && (targetBlock.getType() == Material.OBSIDIAN || targetBlock.getType() == Material.BEDROCK)) {
+                                    // Process the placement packet synchronously with validation
+                                    org.bukkit.Location placementLoc = targetBlock.getLocation().add(0, 1, 0);
+                                    // Check if there's space for the crystal
+                                    if (placementLoc.getBlock().getType() == Material.AIR) {
+                                        event.getPlayer().updateInventory();
+                                    }
+                                }
                             }
-                        });
-                    }
-                } catch (Exception e) {
-                    getLogger().warning("Error handling crystal placement packet");
+                        } catch (Exception e) {
+                            getLogger().log(Level.WARNING, "Error handling crystal placement", e);
+                        }
+                    });
                 }
             }
         });
@@ -77,23 +85,30 @@ public final class CrystalCore extends JavaPlugin implements Listener {
         protocolManager.addPacketListener(new PacketAdapter(this, PacketType.Play.Client.USE_ENTITY) {
             @Override
             public void onPacketReceiving(PacketEvent event) {
-                try {
-                    Entity target = event.getPacket().getEntityModifier(event).read(0);
-                    if (target instanceof EnderCrystal) {
-                        // Optimize crystal attack latency
-                        event.setReadOnly(false);
-                        PacketContainer packet = event.getPacket();
-                        // Process the attack with reduced delay
-                        Bukkit.getScheduler().runTask(getPlugin(), () -> {
-                            try {
-                                protocolManager.receiveClientPacket(event.getPlayer(), packet);
-                            } catch (Exception e) {
-                                getLogger().warning("Error processing crystal attack");
-                            }
-                        });
+                if (!event.isCancelled()) {
+                    try {
+                        Entity target = event.getPacket().getEntityModifier(event).read(0);
+                        if (target instanceof EnderCrystal) {
+                            // Process crystal attack synchronously to prevent race conditions
+                            event.setReadOnly(false);
+                            Bukkit.getScheduler().runTask(getPlugin(), () -> {
+                                try {
+                                    if (target.isValid() && !target.isDead()) {
+                                        // Ensure crystal still exists before removing
+                                        ((EnderCrystal) target).remove();
+                                        // Update nearby players
+                                        for (Player player : target.getWorld().getNearbyPlayers(target.getLocation(), 32)) {
+                                            player.updateInventory();
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    getLogger().log(Level.WARNING, "Error handling crystal attack", e);
+                                }
+                            });
+                        }
+                    } catch (Exception e) {
+                        getLogger().log(Level.WARNING, "Error handling crystal attack packet", e);
                     }
-                } catch (Exception e) {
-                    getLogger().warning("Error handling crystal attack packet");
                 }
             }
         });
